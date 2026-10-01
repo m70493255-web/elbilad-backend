@@ -98,7 +98,10 @@ const productSchema = new mongoose.Schema(
 );
 
 productSchema.index({ category: 1 });
+productSchema.index({ subCategory: 1 });
+productSchema.index({ category: 1, createdAt: -1 });
 productSchema.index({ brand: 1 });
+productSchema.index({ name: 1 });
 productSchema.index({ createdAt: -1 });
 
 productSchema.virtual("discountPercent").get(function () {

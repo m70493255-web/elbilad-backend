@@ -56,6 +56,13 @@ async function revalidateCategoryBanners() {
   } catch { /* non-blocking */ }
 }
 
+async function revalidateProducts() {
+  try {
+    const url = `${process.env.FRONTEND_URL}/api/revalidate?secret=${process.env.REVALIDATE_SECRET}&tag=products`;
+    await fetch(url, { method: "POST" });
+  } catch { /* non-blocking */ }
+}
+
 function authMiddleware(req, res, next) {
   const token = req.cookies?.admin_token;
   if (!token) return res.status(401).json({ error: "غير مصرح" });
@@ -612,7 +619,7 @@ router.delete("/main-categories/remove", authMiddleware, async (req, res) => {
   try {
     const { name } = req.body;
     if (!name) return res.status(400).json({ error: "اسم التصنيف مطلوب" });
-    await Product.updateMany({ category: name }, { $unset: { category: "" } });
+    await Product.updateMany({ subCategory: name }, { $unset: { subCategory: "" } });
     await MainCategory.deleteOne({ name });
     res.json({ success: true });
   } catch {
@@ -1078,15 +1085,16 @@ router.post("/products", authMiddleware, uploadProductImage.fields([{ name: "ima
     if (body.galleryUrls) {
       try { images.push(...JSON.parse(body.galleryUrls)); } catch { /* ignore */ }
     }
-    if (req.files?.galleryFiles) {
-      for (const file of req.files.galleryFiles) {
-        const result = await uploadToCloudinary(file.buffer, "products");
-        images.push(result.secure_url);
-      }
+    if (req.files?.galleryFiles?.length) {
+      const uploadResults = await Promise.all(
+        req.files.galleryFiles.map((file) => uploadToCloudinary(file.buffer, "products"))
+      );
+      uploadResults.forEach((r) => images.push(r.secure_url));
     }
     if (images.length) productData.images = images;
 
     const product = await Product.create(productData);
+    revalidateProducts();
     res.status(201).json(product);
   } catch (err) {
     res.status(500).json({ error: "خطأ في الخادم" });
@@ -1096,7 +1104,36 @@ router.post("/products", authMiddleware, uploadProductImage.fields([{ name: "ima
 // GET /api/admin/products
 router.get("/products", authMiddleware, async (req, res) => {
   try {
-    const products = await Product.find().sort({ createdAt: -1 }).select("name category originalPrice salePrice");
+    const { page, limit, search, category } = req.query;
+    const filter = {};
+    if (category) filter.category = category;
+    if (search) {
+      const escaped = String(search).trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      filter.$or = [
+        { name: { $regex: escaped, $options: "i" } },
+        { category: { $regex: escaped, $options: "i" } },
+      ];
+    }
+
+    if (page !== undefined && limit !== undefined) {
+      const p = Math.max(1, parseInt(page) || 1);
+      const l = Math.max(1, Math.min(100, parseInt(limit) || 10));
+      const [products, total] = await Promise.all([
+        Product.find(filter)
+          .sort({ createdAt: -1 })
+          .skip((p - 1) * l)
+          .limit(l)
+          .select("name category originalPrice salePrice image inStock")
+          .lean(),
+        Product.countDocuments(filter),
+      ]);
+      return res.json({ products, total, totalPages: Math.ceil(total / l), currentPage: p });
+    }
+
+    const products = await Product.find(filter)
+      .sort({ createdAt: -1 })
+      .select("name category originalPrice salePrice image inStock")
+      .lean();
     res.json(products);
   } catch {
     res.status(500).json({ error: "خطأ في الخادم" });
@@ -1106,7 +1143,7 @@ router.get("/products", authMiddleware, async (req, res) => {
 // GET /api/admin/products/:id
 router.get("/products/:id", authMiddleware, async (req, res) => {
   try {
-    const product = await Product.findById(req.params.id);
+    const product = await Product.findById(req.params.id).lean();
     if (!product) return res.status(404).json({ error: "المنتج غير موجود" });
     res.json(product);
   } catch {
@@ -1119,7 +1156,11 @@ router.delete("/products/:id", authMiddleware, async (req, res) => {
   try {
     const product = await Product.findByIdAndDelete(req.params.id);
     if (!product) return res.status(404).json({ error: "المنتج غير موجود" });
-    await deleteFromCloudinary(product.image);
+    if (product.image) await deleteFromCloudinary(product.image);
+    if (Array.isArray(product.images) && product.images.length > 0) {
+      await Promise.allSettled(product.images.map((img) => deleteFromCloudinary(img)));
+    }
+    revalidateProducts();
     res.json({ success: true });
   } catch {
     res.status(500).json({ error: "خطأ في الخادم" });
@@ -1182,16 +1223,17 @@ router.put("/products/:id", authMiddleware, uploadProductImage.fields([{ name: "
       if (body.galleryUrls) {
         try { images.push(...JSON.parse(body.galleryUrls)); } catch { /* ignore */ }
       }
-      if (req.files?.galleryFiles) {
-        for (const file of req.files.galleryFiles) {
-          const result = await uploadToCloudinary(file.buffer, "products");
-          images.push(result.secure_url);
-        }
+      if (req.files?.galleryFiles?.length) {
+        const uploadResults = await Promise.all(
+          req.files.galleryFiles.map((file) => uploadToCloudinary(file.buffer, "products"))
+        );
+        uploadResults.forEach((r) => images.push(r.secure_url));
       }
       product.images = images;
     }
 
     await product.save();
+    revalidateProducts();
     res.json(product);
   } catch (err) {
     res.status(500).json({ error: "خطأ في الخادم" });
@@ -1558,11 +1600,14 @@ router.get("/product-down-payments/public", async (req, res) => {
 // PUT /api/admin/product-down-payments/:category
 router.put("/product-down-payments/:category", authMiddleware, async (req, res) => {
   try {
-    const category = decodeURIComponent(req.params.category);
+    let category = req.params.category;
+    try { category = decodeURIComponent(category); } catch { /* ignore */ }
+    category = String(category || "").trim();
+
     const { amounts } = req.body;
     if (!Array.isArray(amounts) || amounts.length === 0)
       return res.status(400).json({ error: "يجب إرسال مصفوفة غير فارغة" });
-    const coerced = amounts.map((a) => Math.trunc(Number(a)));
+    const coerced = [...new Set(amounts.map((a) => Math.trunc(Number(a))))].sort((a, b) => a - b);
     const invalid = coerced.some((a) => !Number.isFinite(a) || a <= 0);
     if (invalid)
       return res.status(400).json({ error: "جميع القيم يجب أن تكون أرقاماً صحيحة أكبر من صفر" });
@@ -1577,8 +1622,10 @@ router.put("/product-down-payments/:category", authMiddleware, async (req, res) 
     if (err.code === 11000) {
       // Race condition: another request inserted first — just update
       try {
-        const category = decodeURIComponent(req.params.category);
-        const coerced = req.body.amounts.map((a) => Math.trunc(Number(a)));
+        let category = req.params.category;
+        try { category = decodeURIComponent(category); } catch { /* ignore */ }
+        category = String(category || "").trim();
+        const coerced = [...new Set(req.body.amounts.map((a) => Math.trunc(Number(a))))].sort((a, b) => a - b);
         const doc = await ProductDownPayment.findOneAndUpdate(
           { category },
           { $set: { amounts: coerced } },
@@ -1597,7 +1644,9 @@ router.put("/product-down-payments/:category", authMiddleware, async (req, res) 
 // DELETE /api/admin/product-down-payments/:category
 router.delete("/product-down-payments/:category", authMiddleware, async (req, res) => {
   try {
-    const category = decodeURIComponent(req.params.category);
+    let category = req.params.category;
+    try { category = decodeURIComponent(category); } catch { /* ignore */ }
+    category = String(category || "").trim();
     await ProductDownPayment.findOneAndDelete({ category });
     res.json({ success: true });
   } catch {
@@ -1611,12 +1660,13 @@ router.patch("/down-payments", authMiddleware, async (req, res) => {
     const { amounts } = req.body;
     if (!Array.isArray(amounts) || amounts.length === 0)
       return res.status(400).json({ error: "يجب إرسال مصفوفة غير فارغة" });
-    const invalid = amounts.some((a) => !Number.isInteger(a) || a <= 0);
+    const sortedAmounts = [...new Set(amounts.map((a) => Math.trunc(Number(a))))].sort((a, b) => a - b);
+    const invalid = sortedAmounts.some((a) => !Number.isInteger(a) || a <= 0);
     if (invalid)
       return res.status(400).json({ error: "جميع القيم يجب أن تكون أرقاماً صحيحة أكبر من صفر" });
     const doc = await DownPaymentSettings.findOneAndUpdate(
       {},
-      { $set: { amounts } },
+      { $set: { amounts: sortedAmounts } },
       { upsert: true, new: true, setDefaultsOnInsert: true }
     );
     res.json({ amounts: doc.amounts });
