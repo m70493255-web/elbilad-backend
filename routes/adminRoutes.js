@@ -63,6 +63,13 @@ async function revalidateProducts() {
   } catch { /* non-blocking */ }
 }
 
+async function revalidateCompany() {
+  try {
+    const url = `${process.env.FRONTEND_URL}/api/revalidate?secret=${process.env.REVALIDATE_SECRET}&tag=company`;
+    await fetch(url, { method: "POST" });
+  } catch { /* non-blocking */ }
+}
+
 function authMiddleware(req, res, next) {
   const token = req.cookies?.admin_token;
   if (!token) return res.status(401).json({ error: "غير مصرح" });
@@ -341,6 +348,7 @@ router.post("/company/upload/:field", authMiddleware, upload.single("image"), as
     await deleteFromCloudinary(company[field]);
     company[field] = url;
     await company.save();
+    revalidateCompany();
     res.json({ url });
   } catch {
     res.status(500).json({ error: "خطأ في الخادم" });
@@ -358,6 +366,7 @@ router.delete("/company/image/:field", authMiddleware, async (req, res) => {
     await deleteFromCloudinary(company[field]);
     company[field] = "";
     await company.save();
+    revalidateCompany();
     res.json({ success: true });
   } catch {
     res.status(500).json({ error: "خطأ في الخادم" });
@@ -388,6 +397,7 @@ const COMPANY_ALLOWED = [
   "website", "email", "currencyAr", "currencyEn", "taxNumber",
   "shippingCompany", "paymentMethod", "details",
   "qrLink", "link1", "link1Type", "link2", "link2Type",
+  "qrImage", "img1", "img2", "file1", "file2",
 ];
 
 // PUT /api/admin/company
@@ -399,7 +409,23 @@ router.put("/company", authMiddleware, async (req, res) => {
     // normalize legacy field names
     if (body.linkType1 !== undefined) body.link1Type = body.linkType1;
     if (body.linkType2 !== undefined) body.link2Type = body.linkType2;
-    // whitelist only allowed text fields
+
+    // Delete removed images from Cloudinary
+    const imageFields = ["qrImage", "img1", "img2"];
+    for (const key of imageFields) {
+      if (body[key] === "" && company[key]) {
+        await deleteFromCloudinary(company[key]);
+      }
+    }
+    // Delete removed files from Cloudinary
+    const docFields = ["file1", "file2"];
+    for (const key of docFields) {
+      if (body[key] === "" && company[key]) {
+        await deleteFromCloudinary(company[key], "raw");
+      }
+    }
+
+    // whitelist allowed text and asset fields
     for (const key of COMPANY_ALLOWED) {
       if (body[key] !== undefined) company[key] = body[key];
     }
@@ -409,6 +435,7 @@ router.put("/company", authMiddleware, async (req, res) => {
       company.markModified("footerItems");
     }
     await company.save();
+    revalidateCompany();
     res.json(company);
   } catch {
     res.status(500).json({ error: "خطأ في الخادم" });
@@ -977,6 +1004,9 @@ router.post("/reviews/admin-add", authMiddleware, async (req, res) => {
     const { name, comment, rating, gender, approved } = req.body;
     if (!name || !comment) return res.status(400).json({ error: "الاسم والتعليق مطلوبان" });
     const review = await Review.create({ name, comment, rating: rating || 5, gender: gender || "male", approved: !!approved });
+    if (review.approved) {
+      revalidateReviews();
+    }
     res.status(201).json(review);
   } catch {
     res.status(500).json({ error: "خطأ في الخادم" });
@@ -991,9 +1021,10 @@ router.put("/reviews/:id", authMiddleware, async (req, res) => {
     const review = await Review.findByIdAndUpdate(
       req.params.id,
       { name, comment, rating: rating || 5, gender: gender || "male" },
-      { new: true }
+      { new: true, runValidators: true }
     );
     if (!review) return res.status(404).json({ error: "التعليق غير موجود" });
+    revalidateReviews();
     res.json(review);
   } catch {
     res.status(500).json({ error: "خطأ في الخادم" });
@@ -1252,6 +1283,7 @@ router.post("/company/footer-image/:key", authMiddleware, uploadFooterImg.single
     const result = await uploadToCloudinary(req.file.buffer, "company");
     company[key] = result.secure_url;
     await company.save();
+    revalidateCompany();
     res.json({ url: company[key] });
   } catch {
     res.status(500).json({ error: "خطأ في الخادم" });
@@ -1270,6 +1302,7 @@ router.post("/company/footer-file/:key", authMiddleware, uploadDoc.single("file"
     const result = await uploadToCloudinary(req.file.buffer, "docs", { resource_type: "raw" });
     company[key] = result.secure_url;
     await company.save();
+    revalidateCompany();
     res.json({ url: company[key] });
   } catch {
     res.status(500).json({ error: "خطأ في الخادم" });
@@ -1291,6 +1324,7 @@ router.post("/company/footer-items/image/:index", authMiddleware, uploadFooterIm
     company.footerItems[index].image = result.secure_url;
     company.markModified("footerItems");
     await company.save();
+    revalidateCompany();
     res.json({ url: company.footerItems[index].image });
   } catch {
     res.status(500).json({ error: "خطأ في الخادم" });
@@ -1312,6 +1346,7 @@ router.post("/company/footer-items/file/:index", authMiddleware, uploadDoc.singl
     company.footerItems[index].file = result.secure_url;
     company.markModified("footerItems");
     await company.save();
+    revalidateCompany();
     res.json({ url: company.footerItems[index].file });
   } catch {
     res.status(500).json({ error: "خطأ في الخادم" });
@@ -1325,6 +1360,7 @@ router.post("/company/footer-items/add", authMiddleware, async (req, res) => {
     if (!company) company = await Company.create({});
     company.footerItems.push({ image: "", linkType: "link", link: "", file: "" });
     await company.save();
+    revalidateCompany();
     res.json({ index: company.footerItems.length - 1 });
   } catch {
     res.status(500).json({ error: "خطأ في الخادم" });
@@ -1345,6 +1381,7 @@ router.delete("/company/footer-items/:index", authMiddleware, async (req, res) =
     company.footerItems.splice(index, 1);
     company.markModified("footerItems");
     await company.save();
+    revalidateCompany();
     res.json({ success: true });
   } catch {
     res.status(500).json({ error: "خطأ في الخادم" });

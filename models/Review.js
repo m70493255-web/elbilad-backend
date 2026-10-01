@@ -13,5 +13,7 @@ const reviewSchema = new mongoose.Schema(
 
 // Compound index: approved reviews sorted by date — covers the public query
 reviewSchema.index({ approved: 1, createdAt: -1 });
+// Index for admin query: sorted by createdAt
+reviewSchema.index({ createdAt: -1 });
 
 module.exports = mongoose.model("Review", reviewSchema);
