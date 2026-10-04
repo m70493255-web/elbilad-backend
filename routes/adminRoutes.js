@@ -444,13 +444,27 @@ router.put("/company", authMiddleware, async (req, res) => {
 
 const DEFAULT_BANNERS = Array(5).fill(null).map(() => ({ url: "", active: true }));
 
-// GET /api/admin/banners
+// GET /api/admin/banners/all  (admin — returns all banners including inactive/empty)
+router.get("/banners/all", authMiddleware, async (req, res) => {
+  try {
+    let doc = await Banner.findOne().lean();
+    if (!doc) {
+      const created = await Banner.create({ banners: DEFAULT_BANNERS });
+      return res.json(created.banners);
+    }
+    res.json(doc.banners);
+  } catch {
+    res.status(500).json({ error: "خطأ في الخادم" });
+  }
+});
+
+// GET /api/admin/banners  (public — active banners with URLs only, used by homepage cache)
 router.get("/banners", async (req, res) => {
   try {
-    let doc = await Banner.findOne();
+    let doc = await Banner.findOne().lean();
     if (!doc) doc = await Banner.create({ banners: DEFAULT_BANNERS });
-    // Filter active banners with URLs server-side before sending
-    const active = doc.banners.filter((b) => b.url && b.active).map((b) => ({ url: b.url }));
+    // Return only active banners with URLs — used by public homepage cache
+    const active = (doc.banners || []).filter((b) => b.url && b.active).map((b) => ({ url: b.url }));
     res.json(active);
   } catch {
     res.status(500).json({ error: "خطأ في الخادم" });
@@ -467,7 +481,10 @@ router.post("/banners/upload/:index", authMiddleware, uploadBanner.single("image
     if (!req.file) return res.status(400).json({ error: "لم يتم رفع صورة" });
     const old = doc.banners[index]?.url;
     await deleteFromCloudinary(old);
-    const result = await uploadToCloudinary(req.file.buffer, "banners");
+    // Upload with Cloudinary transformations: max 1400px wide, auto quality+format
+    const result = await uploadToCloudinary(req.file.buffer, "banners", {
+      transformation: [{ width: 1400, crop: "limit", quality: "auto", fetch_format: "auto" }],
+    });
     const url = result.secure_url;
     doc.banners.set(index, { url, active: doc.banners[index].active });
     await doc.save();
@@ -1412,8 +1429,11 @@ router.get("/category-banners-bulk", async (req, res) => {
 // GET /api/admin/category-banners/:category
 router.get("/category-banners/:category", async (req, res) => {
   try {
-    let doc = await CategoryBanner.findOne({ category: req.params.category });
-    if (!doc) doc = await CategoryBanner.create({ category: req.params.category });
+    let doc = await CategoryBanner.findOne({ category: req.params.category }).lean();
+    if (!doc) {
+      const created = await CategoryBanner.create({ category: req.params.category });
+      return res.json(created.banners);
+    }
     res.json(doc.banners);
   } catch {
     res.status(500).json({ error: "خطأ في الخادم" });
@@ -1430,9 +1450,13 @@ router.post("/category-banners/:category/upload/:index", authMiddleware, uploadC
     if (isNaN(index) || index < 0 || index >= doc.banners.length) return res.status(400).json({ error: "رقم بانر غير صحيح" });
     if (!req.file) return res.status(400).json({ error: "لم يتم رفع صورة" });
     await deleteFromCloudinary(doc.banners[index]?.url);
-    const result = await uploadToCloudinary(req.file.buffer, "category-banners");
+    // Upload with Cloudinary transformations: max 1400px wide, auto quality+format
+    const result = await uploadToCloudinary(req.file.buffer, "category-banners", {
+      transformation: [{ width: 1400, crop: "limit", quality: "auto", fetch_format: "auto" }],
+    });
     doc.banners.set(index, { url: result.secure_url, active: doc.banners[index].active });
     await doc.save();
+    revalidateCategoryBanners();
     res.json({ url: result.secure_url });
   } catch {
     res.status(500).json({ error: "خطأ في الخادم" });
@@ -1466,6 +1490,7 @@ router.post("/category-banners/:category/add", authMiddleware, async (req, res) 
     if (doc.banners.length >= 10) return res.status(400).json({ error: "الحد الأقصى 10 بانرات" });
     doc.banners.push({ url: "", active: true });
     await doc.save();
+    revalidateCategoryBanners();
     res.json({ index: doc.banners.length - 1 });
   } catch {
     res.status(500).json({ error: "خطأ في الخادم" });
@@ -1483,6 +1508,7 @@ router.delete("/category-banners/:category/:index/image", authMiddleware, async 
     await deleteFromCloudinary(doc.banners[index]?.url);
     doc.banners.set(index, { url: "", active: doc.banners[index].active });
     await doc.save();
+    revalidateCategoryBanners();
     res.json({ success: true });
   } catch {
     res.status(500).json({ error: "خطأ في الخادم" });
@@ -1500,6 +1526,7 @@ router.delete("/category-banners/:category/:index", authMiddleware, async (req, 
     await deleteFromCloudinary(doc.banners[index]?.url);
     doc.banners.splice(index, 1);
     await doc.save();
+    revalidateCategoryBanners();
     res.json({ success: true });
   } catch {
     res.status(500).json({ error: "خطأ في الخادم" });
