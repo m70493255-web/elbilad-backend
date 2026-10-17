@@ -55,6 +55,11 @@ router.post("/", async (req, res) => {
       return res.status(400).json({ ok: false, error: "لا توجد منتجات في الطلب" });
     }
 
+    const totalQuantity = items.reduce((sum, item) => sum + Math.max(1, Math.floor(Number(item.quantity) || 1)), 0);
+    if (totalQuantity > 5) {
+      return res.status(400).json({ ok: false, error: "الحد الأقصى للطلب هو 5 منتجات فقط" });
+    }
+
     if (!customer || !whatsapp || !nationalId || !address) {
       return res.status(400).json({ ok: false, error: "بيانات العميل ناقصة" });
     }
