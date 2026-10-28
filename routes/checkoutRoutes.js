@@ -140,6 +140,65 @@ router.get("/:id/status", async (req, res) => {
   }
 });
 
+// GET /api/checkout/:id/public — public (for customer invoice/print/contract/receipt)
+router.get("/:id/public", async (req, res) => {
+  try {
+    const order = await Checkout.findById(req.params.id);
+    if (!order) return res.status(404).json({ ok: false, error: "not found" });
+    const safeOrder = {
+      _id: order._id,
+      orderId: order.orderId,
+      customer: order.customer,
+      whatsapp: order.whatsapp,
+      nationalId: order.nationalId,
+      address: order.address,
+      installmentType: order.installmentType,
+      months: order.months,
+      monthlyPayment: order.monthlyPayment,
+      total: order.total,
+      downPayment: order.downPayment,
+      discountAmount: order.discountAmount || 0,
+      items: order.items,
+      status: order.status,
+      createdAt: order.createdAt,
+    };
+    res.json(safeOrder);
+  } catch (err) {
+    res.status(500).json({ ok: false, error: "خطأ في الخادم" });
+  }
+});
+
+// GET /api/checkout/:id/invoice — public (for invoice/receipt/contract view)
+router.get("/:id/invoice", async (req, res) => {
+  try {
+    const order = await Checkout.findById(req.params.id);
+    if (!order) return res.status(404).json({ ok: false, error: "not found" });
+    const Company = require("../models/Company");
+    let company = await Company.findOne();
+    if (!company) company = {};
+    const safeOrder = {
+      _id: order._id,
+      orderId: order.orderId,
+      customer: order.customer,
+      whatsapp: order.whatsapp,
+      nationalId: order.nationalId,
+      address: order.address,
+      installmentType: order.installmentType,
+      months: order.months,
+      monthlyPayment: order.monthlyPayment,
+      total: order.total,
+      downPayment: order.downPayment,
+      discountAmount: order.discountAmount || 0,
+      items: order.items,
+      status: order.status,
+      createdAt: order.createdAt,
+    };
+    res.json({ order: safeOrder, company });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: "خطأ في الخادم" });
+  }
+});
+
 // GET /api/checkout — admin only
 router.get("/", authMiddleware, async (req, res) => {
   try {
