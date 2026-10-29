@@ -76,7 +76,9 @@ const generalLimiter = rateLimit({
     req.originalUrl?.startsWith("/api/admin") ||
     req.path?.startsWith("/api/admin") ||
     req.originalUrl?.includes("/status") ||
-    req.path?.includes("/status"),
+    req.path?.includes("/status") ||
+    req.originalUrl?.includes("/live") ||
+    req.path?.includes("/live"),
 });
 
 app.use(generalLimiter);

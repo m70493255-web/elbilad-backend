@@ -2,6 +2,7 @@ const express = require("express");
 const jwt = require("jsonwebtoken");
 const router = express.Router();
 const Checkout = require("../models/Checkout");
+const orderEvents = require("../utils/orderEvents");
 
 function authMiddleware(req, res, next) {
   const token = req.cookies?.admin_token;
@@ -235,9 +236,73 @@ router.put("/:id/status", authMiddleware, async (req, res) => {
       { new: true }
     );
     if (!order) return res.status(404).json({ ok: false, error: "not found" });
+    orderEvents.emit(`order:${req.params.id}:status`, status);
     res.json(order);
   } catch {
     res.status(500).json({ ok: false, error: "خطأ في الخادم" });
+  }
+});
+
+// GET /api/checkout/:id/live — SSE stream for instant real-time notification
+router.get("/:id/live", async (req, res) => {
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+  if (typeof res.flushHeaders === "function") {
+    res.flushHeaders();
+  }
+
+  try {
+    const order = await Checkout.findById(req.params.id).select("status");
+    if (!order) {
+      res.write(`data: ${JSON.stringify({ status: "not_found" })}\n\n`);
+      return res.end();
+    }
+
+    if (order.status === "confirmed" || order.status === "cancelled") {
+      res.write(`data: ${JSON.stringify({ status: order.status })}\n\n`);
+      return res.end();
+    }
+
+    const eventName = `order:${req.params.id}:status`;
+    let isClosed = false;
+
+    const onStatus = (status) => {
+      if (isClosed) return;
+      isClosed = true;
+      res.write(`data: ${JSON.stringify({ status })}\n\n`);
+      res.end();
+    };
+
+    orderEvents.once(eventName, onStatus);
+
+    const pingInterval = setInterval(() => {
+      if (isClosed) {
+        clearInterval(pingInterval);
+        return;
+      }
+      res.write(": ping\n\n");
+    }, 15000);
+
+    const timeout = setTimeout(() => {
+      if (!isClosed) {
+        isClosed = true;
+        clearInterval(pingInterval);
+        orderEvents.removeListener(eventName, onStatus);
+        res.write(`data: ${JSON.stringify({ status: "pending" })}\n\n`);
+        res.end();
+      }
+    }, 60000);
+
+    req.on("close", () => {
+      isClosed = true;
+      clearInterval(pingInterval);
+      clearTimeout(timeout);
+      orderEvents.removeListener(eventName, onStatus);
+    });
+  } catch {
+    res.status(500).end();
   }
 });
 
