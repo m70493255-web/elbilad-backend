@@ -16,6 +16,7 @@ const DownPaymentSettings = require("../models/DownPaymentSettings");
 const ProductDownPayment = require("../models/ProductDownPayment");
 const { makeImageUpload, makeFileUpload, uploadToCloudinary, deleteFromCloudinary } = require("../config/cloudinary");
 const { addToBlacklist, isBlacklisted } = require("../utils/tokenBlacklist");
+const orderEvents = require("../utils/orderEvents");
 
 const upload = makeImageUpload();
 const uploadBankLogo = makeImageUpload();
@@ -981,6 +982,13 @@ router.put("/orders/:id/status", authMiddleware, async (req, res) => {
       { new: true }
     );
     if (!order) return res.status(404).json({ ok: false, error: "not found" });
+
+    // Broadcast status change immediately to all listening clients (SSE / real-time)
+    orderEvents.emit(`status:${order._id}`, order.status);
+    if (order.orderId) {
+      orderEvents.emit(`status:${order.orderId}`, order.status);
+    }
+
     res.json(order);
   } catch {
     res.status(500).json({ ok: false, error: "خطأ في الخادم" });

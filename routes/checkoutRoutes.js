@@ -2,6 +2,7 @@ const express = require("express");
 const jwt = require("jsonwebtoken");
 const router = express.Router();
 const Checkout = require("../models/Checkout");
+const orderEvents = require("../utils/orderEvents");
 
 function authMiddleware(req, res, next) {
   const token = req.cookies?.admin_token || req.headers.authorization?.replace(/^Bearer\s+/i, "");
@@ -129,12 +130,90 @@ router.post("/", async (req, res) => {
   }
 });
 
-// GET /api/checkout/:id/status — public (للـ polling من صفحة verify)
+// GET /api/checkout/:id/live — SSE stream for instant order updates (0ms real-time)
+router.get("/:id/live", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const mongoose = require("mongoose");
+    let order = null;
+    if (mongoose.Types.ObjectId.isValid(id)) {
+      order = await Checkout.findById(id).select("_id orderId status");
+    }
+    if (!order) {
+      order = await Checkout.findOne({ orderId: id }).select("_id orderId status");
+    }
+
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
+    if (typeof res.flushHeaders === "function") res.flushHeaders();
+
+    if (!order) {
+      res.write(`data: ${JSON.stringify({ status: "not_found" })}\n\n`);
+      return res.end();
+    }
+
+    // Immediately push current status
+    res.write(`data: ${JSON.stringify({ status: order.status, orderId: order.orderId })}\n\n`);
+
+    if (order.status === "confirmed" || order.status === "cancelled") {
+      return res.end();
+    }
+
+    const onStatusUpdate = (newStatus) => {
+      try {
+        res.write(`data: ${JSON.stringify({ status: newStatus, orderId: order.orderId })}\n\n`);
+        if (newStatus === "confirmed" || newStatus === "cancelled") {
+          setTimeout(() => {
+            try { res.end(); } catch {}
+          }, 1000);
+        }
+      } catch {
+        // stream closed
+      }
+    };
+
+    const idKey = `status:${order._id}`;
+    const orderNumKey = `status:${order.orderId}`;
+    orderEvents.on(idKey, onStatusUpdate);
+    orderEvents.on(orderNumKey, onStatusUpdate);
+
+    // Heartbeat every 15s to keep connection open through proxies
+    const heartbeat = setInterval(() => {
+      try {
+        res.write(": keepalive\n\n");
+      } catch {
+        clearInterval(heartbeat);
+      }
+    }, 15000);
+
+    req.on("close", () => {
+      clearInterval(heartbeat);
+      orderEvents.off(idKey, onStatusUpdate);
+      orderEvents.off(orderNumKey, onStatusUpdate);
+    });
+  } catch (err) {
+    console.error("[SSE Error]", err);
+    if (!res.headersSent) {
+      res.status(500).json({ ok: false });
+    }
+  }
+});
+
+// GET /api/checkout/:id/status — public (للـ polling السريع كـ fallback)
 router.get("/:id/status", async (req, res) => {
   try {
-    const order = await Checkout.findById(req.params.id).select("status");
+    const mongoose = require("mongoose");
+    let order = null;
+    if (mongoose.Types.ObjectId.isValid(req.params.id)) {
+      order = await Checkout.findById(req.params.id).select("status orderId");
+    }
+    if (!order) {
+      order = await Checkout.findOne({ orderId: req.params.id }).select("status orderId");
+    }
     if (!order) return res.status(404).json({ ok: false });
-    res.json({ status: order.status });
+    res.json({ status: order.status, orderId: order.orderId });
   } catch {
     res.status(500).json({ ok: false });
   }
@@ -242,6 +321,13 @@ router.put("/:id/status", authMiddleware, async (req, res) => {
       { new: true }
     );
     if (!order) return res.status(404).json({ ok: false, error: "not found" });
+
+    // Broadcast status change immediately to all listening clients (SSE / real-time)
+    orderEvents.emit(`status:${order._id}`, order.status);
+    if (order.orderId) {
+      orderEvents.emit(`status:${order.orderId}`, order.status);
+    }
+
     res.json(order);
   } catch {
     res.status(500).json({ ok: false, error: "خطأ في الخادم" });
