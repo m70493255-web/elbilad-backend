@@ -29,46 +29,44 @@ const uploadSubCatImage = makeImageUpload();
 
 const router = express.Router();
 
-async function revalidateHomeSettings() {
+async function triggerRevalidate(tag) {
   try {
-    const url = `${process.env.FRONTEND_URL}/api/revalidate?secret=${process.env.REVALIDATE_SECRET}&tag=home-settings`;
-    await fetch(url, { method: "POST" });
+    const raw = process.env.FRONTEND_URL || "http://localhost:3000";
+    const urls = raw.split(",").map((u) => u.trim()).filter(Boolean);
+    const secret = process.env.REVALIDATE_SECRET;
+    if (!secret) return;
+    for (const baseUrl of urls) {
+      try {
+        const cleanBase = baseUrl.replace(/\/$/, "");
+        const url = `${cleanBase}/api/revalidate?secret=${encodeURIComponent(secret)}&tag=${encodeURIComponent(tag)}`;
+        await fetch(url, { method: "POST" });
+      } catch { /* non-blocking */ }
+    }
   } catch { /* non-blocking */ }
+}
+
+async function revalidateHomeSettings() {
+  await triggerRevalidate("home-settings");
 }
 
 async function revalidateBanners() {
-  try {
-    const url = `${process.env.FRONTEND_URL}/api/revalidate?secret=${process.env.REVALIDATE_SECRET}&tag=banners`;
-    await fetch(url, { method: "POST" });
-  } catch { /* non-blocking */ }
+  await triggerRevalidate("banners");
 }
 
 async function revalidateReviews() {
-  try {
-    const url = `${process.env.FRONTEND_URL}/api/revalidate?secret=${process.env.REVALIDATE_SECRET}&tag=reviews`;
-    await fetch(url, { method: "POST" });
-  } catch { /* non-blocking */ }
+  await triggerRevalidate("reviews");
 }
 
 async function revalidateCategoryBanners() {
-  try {
-    const url = `${process.env.FRONTEND_URL}/api/revalidate?secret=${process.env.REVALIDATE_SECRET}&tag=category-banners`;
-    await fetch(url, { method: "POST" });
-  } catch { /* non-blocking */ }
+  await triggerRevalidate("category-banners");
 }
 
 async function revalidateProducts() {
-  try {
-    const url = `${process.env.FRONTEND_URL}/api/revalidate?secret=${process.env.REVALIDATE_SECRET}&tag=products`;
-    await fetch(url, { method: "POST" });
-  } catch { /* non-blocking */ }
+  await triggerRevalidate("products");
 }
 
 async function revalidateCompany() {
-  try {
-    const url = `${process.env.FRONTEND_URL}/api/revalidate?secret=${process.env.REVALIDATE_SECRET}&tag=company`;
-    await fetch(url, { method: "POST" });
-  } catch { /* non-blocking */ }
+  await triggerRevalidate("company");
 }
 
 function authMiddleware(req, res, next) {

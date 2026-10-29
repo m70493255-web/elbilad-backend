@@ -3,8 +3,17 @@ const jwt = require("jsonwebtoken");
 
 async function revalidateProducts() {
   try {
-    const url = `${process.env.FRONTEND_URL}/api/revalidate?secret=${process.env.REVALIDATE_SECRET}&tag=products`;
-    await fetch(url, { method: "POST" });
+    const raw = process.env.FRONTEND_URL || "http://localhost:3000";
+    const urls = raw.split(",").map((u) => u.trim()).filter(Boolean);
+    const secret = process.env.REVALIDATE_SECRET;
+    if (!secret) return;
+    for (const baseUrl of urls) {
+      try {
+        const cleanBase = baseUrl.replace(/\/$/, "");
+        const url = `${cleanBase}/api/revalidate?secret=${encodeURIComponent(secret)}&tag=products`;
+        await fetch(url, { method: "POST" });
+      } catch { /* non-blocking */ }
+    }
   } catch { /* non-blocking */ }
 }
 
