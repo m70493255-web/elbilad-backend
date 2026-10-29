@@ -16,6 +16,7 @@ const DownPaymentSettings = require("../models/DownPaymentSettings");
 const ProductDownPayment = require("../models/ProductDownPayment");
 const { makeImageUpload, makeFileUpload, uploadToCloudinary, deleteFromCloudinary } = require("../config/cloudinary");
 const { addToBlacklist, isBlacklisted } = require("../utils/tokenBlacklist");
+const orderEvents = require("../utils/orderEvents");
 
 const upload = makeImageUpload();
 const uploadBankLogo = makeImageUpload();
@@ -973,6 +974,24 @@ router.put("/orders/:id/status", authMiddleware, async (req, res) => {
       { status },
       { new: true }
     );
+    if (!order) return res.status(404).json({ ok: false, error: "not found" });
+    orderEvents.emit(`order:${req.params.id}:status`, status);
+    res.json(order);
+  } catch {
+    res.status(500).json({ ok: false, error: "خطأ في الخادم" });
+  }
+});
+
+// PUT /api/admin/orders/:id/financials
+router.put("/orders/:id/financials", authMiddleware, async (req, res) => {
+  try {
+    const { total, downPayment, months, monthlyPayment } = req.body;
+    const update = {};
+    if (total !== undefined) update.total = Number(total);
+    if (downPayment !== undefined) update.downPayment = Number(downPayment);
+    if (months !== undefined) update.months = Number(months);
+    if (monthlyPayment !== undefined) update.monthlyPayment = Number(monthlyPayment);
+    const order = await Checkout.findByIdAndUpdate(req.params.id, update, { new: true });
     if (!order) return res.status(404).json({ ok: false, error: "not found" });
     res.json(order);
   } catch {

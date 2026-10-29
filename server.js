@@ -72,13 +72,17 @@ const generalLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "محاولات كثيرة، حاول بعد قليل" },
-  skip: (req) => req.originalUrl?.startsWith("/api/admin") || req.path?.startsWith("/api/admin"),
+  skip: (req) =>
+    req.originalUrl?.startsWith("/api/admin") ||
+    req.path?.startsWith("/api/admin") ||
+    req.originalUrl?.includes("/status") ||
+    req.path?.includes("/status"),
 });
 
 app.use(generalLimiter);
 app.use("/api/admin", adminLimiter);
 app.use("/api/admin/login", loginLimiter);
-app.use("/api/checkout", checkoutLimiter);
+app.post("/api/checkout", checkoutLimiter);
 
 // ── Routes ─────────────────────────────────────────────────
 app.get("/", (req, res) => {
