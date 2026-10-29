@@ -16,7 +16,6 @@ const DownPaymentSettings = require("../models/DownPaymentSettings");
 const ProductDownPayment = require("../models/ProductDownPayment");
 const { makeImageUpload, makeFileUpload, uploadToCloudinary, deleteFromCloudinary } = require("../config/cloudinary");
 const { addToBlacklist, isBlacklisted } = require("../utils/tokenBlacklist");
-const orderEvents = require("../utils/orderEvents");
 
 const upload = makeImageUpload();
 const uploadBankLogo = makeImageUpload();
@@ -72,7 +71,7 @@ async function revalidateCompany() {
 }
 
 function authMiddleware(req, res, next) {
-  const token = req.cookies?.admin_token;
+  const token = req.cookies?.admin_token || req.headers.authorization?.replace(/^Bearer\s+/i, "");
   if (!token) return res.status(401).json({ error: "غير مصرح" });
   
   // التحقق من القائمة السوداء
@@ -942,7 +941,14 @@ router.get("/orders", authMiddleware, async (req, res) => {
 // GET /api/admin/orders/:id
 router.get("/orders/:id", authMiddleware, async (req, res) => {
   try {
-    const order = await Checkout.findById(req.params.id);
+    const mongoose = require("mongoose");
+    let order = null;
+    if (mongoose.Types.ObjectId.isValid(req.params.id)) {
+      order = await Checkout.findById(req.params.id);
+    }
+    if (!order) {
+      order = await Checkout.findOne({ orderId: req.params.id });
+    }
     if (!order) return res.status(404).json({ ok: false, error: "not found" });
     res.json(order);
   } catch {
@@ -975,7 +981,6 @@ router.put("/orders/:id/status", authMiddleware, async (req, res) => {
       { new: true }
     );
     if (!order) return res.status(404).json({ ok: false, error: "not found" });
-    orderEvents.emit(`order:${req.params.id}:status`, status);
     res.json(order);
   } catch {
     res.status(500).json({ ok: false, error: "خطأ في الخادم" });
