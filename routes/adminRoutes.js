@@ -1700,6 +1700,10 @@ router.put("/product-down-payments/:category", authMiddleware, async (req, res) 
     try { category = decodeURIComponent(category); } catch { /* ignore */ }
     category = String(category || "").trim();
 
+    if (!category) {
+      return res.status(400).json({ error: "اسم الموديل مطلوب" });
+    }
+
     const { amounts } = req.body;
     if (!Array.isArray(amounts) || amounts.length === 0)
       return res.status(400).json({ error: "يجب إرسال مصفوفة غير فارغة" });
@@ -1707,12 +1711,16 @@ router.put("/product-down-payments/:category", authMiddleware, async (req, res) 
     const invalid = coerced.some((a) => !Number.isFinite(a) || a <= 0);
     if (invalid)
       return res.status(400).json({ error: "جميع القيم يجب أن تكون أرقاماً صحيحة أكبر من صفر" });
+
     // Use update-or-insert pattern safe against duplicate key races
     const doc = await ProductDownPayment.findOneAndUpdate(
       { category },
       { $set: { amounts: coerced } },
       { new: true, upsert: true, setDefaultsOnInsert: true }
     );
+    if (!doc) {
+      return res.status(500).json({ error: "فشل حفظ الدفعات للموديل" });
+    }
     res.json(doc);
   } catch (err) {
     if (err.code === 11000) {
@@ -1727,13 +1735,13 @@ router.put("/product-down-payments/:category", authMiddleware, async (req, res) 
           { $set: { amounts: coerced } },
           { new: true }
         );
-        return res.json(doc);
+        if (doc) return res.json(doc);
       } catch (retryErr) {
         console.error("PUT product-down-payments retry error:", retryErr.message);
       }
     }
     console.error("PUT product-down-payments error:", err.message, err.stack);
-    res.status(500).json({ error: "خطأ في الخادم" });
+    res.status(500).json({ error: "خطأ في الخادم أثناء حفظ الدفعات" });
   }
 });
 
