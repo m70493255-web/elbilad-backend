@@ -1424,7 +1424,7 @@ router.delete("/company/footer-items/:index", authMiddleware, async (req, res) =
       return res.status(400).json({ error: "رقم غير صحيح" });
     const item = company.footerItems[index];
     await deleteFromCloudinary(item.image);
-    await deleteFromCloudinary(item.file);
+    await deleteFromCloudinary(item.file, "raw");
     company.footerItems.splice(index, 1);
     company.markModified("footerItems");
     await company.save();
