@@ -60,7 +60,6 @@ Backend/
 │   └── productController.js
 ├── models/
 │   ├── Admin.js
-│   ├── Bank.js
 │   ├── Banner.js
 │   ├── CardFieldSettings.js
 │   ├── CategoryBanner.js
@@ -236,12 +235,6 @@ Backend/
 
 ---
 
-### `Bank.js`
-بيانات البنوك للتحويل.
-- `name`, `iban`, `logo` (رابط Cloudinary).
-
----
-
 ### `Review.js`
 تقييمات العملاء.
 
@@ -412,14 +405,6 @@ Backend/
 | POST | `/api/admin/products` | أدمن | إضافة منتج مع رفع صورة |
 | PUT | `/api/admin/products/:id` | أدمن | تعديل منتج مع رفع صورة |
 | DELETE | `/api/admin/products/:id` | أدمن | حذف منتج وصورته من Cloudinary |
-
-#### البنوك
-| Method | Path | Auth | الوصف |
-|---|---|---|---|
-| GET | `/api/admin/banks` | أدمن | جلب البنوك |
-| POST | `/api/admin/banks` | أدمن | إضافة بنك مع لوجو |
-| PUT | `/api/admin/banks/:id` | أدمن | تعديل بنك |
-| DELETE | `/api/admin/banks/:id` | أدمن | حذف بنك وصورته |
 
 #### إعدادات حقول البطاقة
 | Method | Path | Auth | الوصف |
