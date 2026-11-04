@@ -1,5 +1,6 @@
 const Product = require("../models/Product");
 const jwt = require("jsonwebtoken");
+const mongoose = require("mongoose");
 
 async function revalidateProducts() {
   try {
@@ -29,12 +30,24 @@ function requireAdmin(req, res, next) {
 }
 
 function normalizeArabic(str) {
-  return str
+  if (!str) return "";
+  return String(str)
     .replace(/[أإآا]/g, "ا")
     .replace(/[ىي]/g, "ي")
     .replace(/ة/g, "ه")
     .replace(/ؤ/g, "و")
     .replace(/ئ/g, "ي");
+}
+
+function escapeRegex(string) {
+  return String(string || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function slugify(text) {
+  return String(text || "")
+    .toLowerCase()
+    .replace(/[^\w\u0600-\u06FF]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 }
 
 const ALLOWED_FIELDS = [
@@ -83,11 +96,44 @@ exports.getProducts = async (req, res) => {
 
 exports.getProduct = async (req, res) => {
   try {
-    const product = await Product.findById(req.params.id).lean({ virtuals: true });
-    if (!product) return res.status(404).json({ message: "Product not found" });
-    res.json(product);
-  } catch {
-    res.status(404).json({ message: "Product not found" });
+    const rawId = decodeURIComponent(req.params.id || "").trim();
+    if (!rawId) return res.status(404).json({ message: "Product not found" });
+
+    // 1. Try finding by MongoDB ObjectId if valid
+    if (mongoose.Types.ObjectId.isValid(rawId)) {
+      const product = await Product.findById(rawId).lean({ virtuals: true });
+      if (product) return res.json(product);
+    }
+
+    // 2. Try finding by exact name
+    let product = await Product.findOne({ name: rawId }).lean({ virtuals: true });
+    if (product) return res.json(product);
+
+    // 3. Try finding by case-insensitive regex name
+    const cleanQuery = rawId.replace(/[-_]+/g, " ").trim();
+    if (cleanQuery) {
+      product = await Product.findOne({
+        name: { $regex: new RegExp(escapeRegex(cleanQuery), "i") },
+      }).lean({ virtuals: true });
+      if (product) return res.json(product);
+    }
+
+    // 4. Try finding by normalized Arabic name or slug match
+    const normalizedRaw = normalizeArabic(cleanQuery);
+    const allProducts = await Product.find({}, {}).limit(300).lean({ virtuals: true });
+
+    product = allProducts.find((p) => slugify(p.name) === slugify(rawId));
+    if (product) return res.json(product);
+
+    product = allProducts.find((p) => {
+      const normName = normalizeArabic(p.name || "");
+      return normName.includes(normalizedRaw) || normalizedRaw.includes(normName);
+    });
+    if (product) return res.json(product);
+
+    return res.status(404).json({ message: "Product not found" });
+  } catch (err) {
+    res.status(500).json({ error: "خطأ في الخادم" });
   }
 };
 
