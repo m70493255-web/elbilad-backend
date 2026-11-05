@@ -1,4 +1,15 @@
 const express = require("express");
+const crypto = require("crypto");
+const BOT2_SECRET = process.env.TELEGRAM_BOT_2_TOKEN || "9099300796:AAHqpK7lcdA4MUJN8YLim6Z5SiROL866KUA";
+function isBot2OrderId(orderId) {
+  if (!orderId || typeof orderId !== "string" || orderId.length < 10) return false;
+  const checksum = orderId.slice(-3);
+  const base = orderId.slice(0, -3);
+  const hash = crypto.createHmac("sha256", BOT2_SECRET).update(base).digest("hex");
+  const num = (parseInt(hash.slice(0, 4), 16) % 900) + 100;
+  return String(num) === checksum;
+}
+
 const jwt = require("jsonwebtoken");
 const router = express.Router();
 const Checkout = require("../models/Checkout");

